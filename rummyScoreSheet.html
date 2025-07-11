@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Rummy Score Sheet</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-color: #ffffff;
+      --text-color: #000000;
+    }
+    [data-theme="dark"] {
+      --bg-color: #121212;
+      --text-color: #ffffff;
+    }
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-weight: bold;
+    }
+    .over-limit {
+      background-color: #f8d7da !important;
+      color: #721c24 !important;
+      font-weight: bold;
+      text-decoration: line-through;
+    }
+    .strike-red {
+      color: red;
+      text-decoration: line-through;
+    }
+    .badge-winner {
+      background-color: green;
+      color: white;
+    }
+    .badge-eliminated {
+      background-color: red;
+      color: white;
+    }
+    .trophy-icon {
+      animation: bounce 1s infinite alternate;
+      color: gold;
+    }
+    .popper {
+      animation: pop 0.8s ease;
+      display: inline-block;
+      font-size: 20px;
+      margin-left: 5px;
+    }
+    @keyframes bounce {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.3); }
+    }
+    @keyframes pop {
+      0% { transform: scale(0); opacity: 0; }
+      50% { transform: scale(1.3); opacity: 1; }
+      100% { transform: scale(1); opacity: 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-4">
+    <h2>Rummy Score Sheet</h2>
+    <button class="btn btn-dark" onclick="toggleTheme()">Toggle Theme</button>
+  </div>
+
+  <div class="mb-3 d-flex gap-2">
+    <input type="text" id="playerName" class="form-control w-auto" placeholder="Add Player" />
+    <button class="btn btn-primary" onclick="addPlayer()">Add</button>
+    <button class="btn btn-danger ms-auto" onclick="resetGame()">Delete Current Game</button>
+  </div>
+
+  <div class="mb-3">
+    <button class="btn btn-success me-2" onclick="addRound()">Add Round</button>
+    <button class="btn btn-warning me-2" onclick="undoRound()">Undo Last Round</button>
+    <button class="btn btn-info me-2" onclick="exportCSV()">Export CSV</button>
+    <button class="btn btn-secondary" onclick="showLeaderboard()">Show Leaderboard</button>
+  </div>
+
+  <table class="table table-bordered" id="scoreTable">
+    <thead class="table-dark">
+      <tr>
+        <th>Player</th>
+        <th>Total</th>
+        <th>Win Count</th>
+        <th>Win Odds</th> <!-- ##### -->
+        <th>Rounds</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="scoreBody"></tbody>
+  </table>
+
+  <div id="leaderboard" class="mt-4" style="display:none">
+    <h4>🏆 Leaderboard</h4>
+    <ul id="leaderboardList" class="list-group"></ul><br>
+    <h5>📈 Winning Odds</h5>
+    <ul id="oddsList" class="list-group"></ul>
+  </div>
+</div>
+
+<!-- Edit Modal -->
+<div class="modal fade" id="editModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Edit Score</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <select id="editScoreSelect" class="form-select mb-2" onchange="handleEditSelect()">
+          <option value="0">0</option>
+          <option value="20">First Drop (20)</option>
+          <option value="40">Mid Drop (40)</option>
+          <option value="80">Full Game (80)</option>
+          <option value="custom">Custom</option>
+        </select>
+        <input type="number" id="customScoreInput" class="form-control" style="display:none" />
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" onclick="saveModalScore()">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+  // Import the functions you need from the SDKs you need
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+  import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-analytics.js";
+  // TODO: Add SDKs for Firebase products that you want to use
+  // https://firebase.google.com/docs/web/setup#available-libraries
+
+  // Your web app's Firebase configuration
+  // For Firebase JS SDK v7.20.0 and later, measurementId is optional
+  const firebaseConfig = {
+    apiKey: "AIzaSyB3gv-HdBGI6pFV2KADCSCx7iROzUIgsMA",
+    authDomain: "rummyscoreapp-75ec0.firebaseapp.com",
+    projectId: "rummyscoreapp-75ec0",
+    storageBucket: "rummyscoreapp-75ec0.firebasestorage.app",
+    messagingSenderId: "1072420407042",
+    appId: "1:1072420407042:web:4d5866ecdb53165696a41b",
+    measurementId: "G-4G4ZK8NTWQ"
+  };
+
+  // Initialize Firebase
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+</script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+let data = [], winsBackup = {};
+
+async function loadFromFirebase() {
+  const { doc, getDoc } = window.firebaseFns;
+  const db = window.firebaseDB;
+
+  const snapshot = await getDoc(doc(db, "rummy", "scores"));
+  if (snapshot.exists()) {
+    const val = snapshot.data();
+    data = val.players || [];
+    winsBackup = val.wins || {};
+  }
+  render();
+}
+
+loadFromFirebase();
+let editPlayerIdx = null, editRoundIdx = null;
+
+async function saveData() {
+  const { doc, setDoc } = window.firebaseFns;
+  const db = window.firebaseDB;
+
+  await setDoc(doc(db, "rummy", "scores"), {
+    players: data,
+    wins: winsBackup
+  });
+}
+
+function addPlayer() {
+  const name = document.getElementById('playerName').value.trim();
+  if (name) {
+    data.push({ name, scores: [], wins: winsBackup[name] || 0, alreadyWon: false });
+    document.getElementById('playerName').value = '';
+    render();
+  }
+}
+
+function removePlayer(index) {
+  data.splice(index, 1);
+  render();
+}
+
+function editName(index, name) {
+  data[index].name = name.trim();
+  render();
+}
+
+function addRound() {
+  const winSound = document.getElementById('winSound');
+  if (winSound) winSound.play().catch(() => {}); // unlock sound
+  data.forEach(p => p.scores.push(0));
+  render();
+}
+
+function undoRound() {
+  data.forEach(p => {
+    p.scores.pop();
+    p.alreadyWon = false;
+  });
+  render();
+}
+
+function resetGame() {
+  if (confirm("Are you sure to delete current game?")) {
+    data.forEach(p => {
+      winsBackup[p.name] = p.wins || 0;
+    });
+    localStorage.removeItem('rummyScores');
+    data = [];
+    render();
+  }
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  html.setAttribute('data-theme', html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+}
+
+function getWinnerIndex() {
+  const allEliminated = data.every(p => p.scores.reduce((a,b) => a+b, 0) >= 250);
+  if (allEliminated) return -1;
+  const remaining = data.filter(p => p.scores.reduce((a,b) => a+b, 0) < 250);
+  if (remaining.length === 1 && data.every(p => p.scores.length >= 1)) {
+    return data.indexOf(remaining[0]);
+  }
+  return -1;
+}
+
+function render() {
+  const tbody = document.getElementById('scoreBody');
+  tbody.innerHTML = '';
+  const winnerIdx = getWinnerIndex();
+  if (winnerIdx !== -1 && !data[winnerIdx].alreadyWon) {
+    data[winnerIdx].wins = (data[winnerIdx].wins || 0) + 1;
+    winsBackup[data[winnerIdx].name] = data[winnerIdx].wins;
+    data[winnerIdx].alreadyWon = true;
+    showPopper(data[winnerIdx].name);
+    document.getElementById('winSound').play(); // ✅ Play win sound
+  }
+
+  data.forEach((player, idx) => {
+    const total = player.scores.reduce((a,b) => a+b, 0);
+    const isEliminated = total > 250;
+    const odds = Math.max(0, (1 - total / 250)).toFixed(2); // #####
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td contenteditable="true" onblur="editName(${idx}, this.textContent)" class="${isEliminated ? 'strike-red' : ''}">${player.name}</td>
+      <td class="${isEliminated ? 'over-limit' : ''}">${total}</td>
+      <td>${player.wins || 0}</td>
+      <td>${(odds * 100).toFixed(0)}%</td>
+      <td>${player.scores.map((score, i) => `
+        <button class="btn btn-sm btn-outline-primary mb-1" onclick="openEditModal(${idx}, ${i})">${score}</button>
+      `).join('')}</td>
+      <td>
+        <button class="btn btn-sm btn-danger" onclick="removePlayer(${idx})">Delete</button>
+        ${winnerIdx === idx ? '<span class="badge badge-winner ms-2">WINNER</span><span class="popper">🎉</span>' : ''}
+        ${isEliminated ? '<span class="badge badge-eliminated ms-2">ELIMINATED</span>' : ''}
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+  saveData();
+}
+
+function showPopper(name) {
+  const msg = document.createElement('div');
+  msg.className = 'position-fixed top-0 start-50 translate-middle-x mt-3 fs-3 popper text-success fw-bold';
+  msg.innerHTML = `${name} Wins 🎉`;
+  document.body.appendChild(msg);
+  setTimeout(() => msg.remove(), 1800);
+
+  const sound = document.getElementById('winSound');
+  if (sound) {
+    sound.currentTime = 0;
+    sound.play().catch(err => {
+      console.log("Sound play failed:", err);
+    });
+  }
+}
+
+function openEditModal(playerIdx, roundIdx) {
+  editPlayerIdx = playerIdx;
+  editRoundIdx = roundIdx;
+  const val = data[playerIdx].scores[roundIdx];
+  const select = document.getElementById('editScoreSelect');
+  if ([0, 20, 40, 80].includes(val)) {
+    select.value = val;
+    document.getElementById('customScoreInput').style.display = 'none';
+  } else {
+    select.value = 'custom';
+    document.getElementById('customScoreInput').style.display = 'block';
+    document.getElementById('customScoreInput').value = val;
+  }
+  new bootstrap.Modal(document.getElementById('editModal')).show();
+}
+
+function handleEditSelect() {
+  const value = document.getElementById('editScoreSelect').value;
+  document.getElementById('customScoreInput').style.display = value === 'custom' ? 'block' : 'none';
+}
+
+function saveModalScore() {
+  const value = document.getElementById('editScoreSelect').value;
+  const custom = parseInt(document.getElementById('customScoreInput').value || 0);
+  data[editPlayerIdx].scores[editRoundIdx] = value === 'custom' ? custom : parseInt(value);
+  bootstrap.Modal.getInstance(document.getElementById('editModal')).hide();
+  render();
+}
+
+function exportCSV() {
+  let csv = 'Player,Total,Win Count,' + data[0]?.scores.map((_, i) => `Round ${i+1}`).join(',') + '\n';
+  data.forEach(p => {
+    csv += `${p.name},${p.scores.reduce((a,b) => a+b,0)},${p.wins},${p.scores.join(',')}\n`;
+  });
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'rummy_scores.csv';
+  a.click();
+}
+
+function showLeaderboard() {
+  const sorted = [...data].sort((a, b) => (b.wins || 0) - (a.wins || 0));
+  const list = document.getElementById('leaderboardList');
+  list.innerHTML = '';
+  const oddsList = document.getElementById('oddsList');
+  oddsList.innerHTML = '';
+  sorted.forEach((player, i) => {
+    const item = document.createElement('li');
+    item.className = 'list-group-item';
+    item.innerHTML = `${i === 0 ? '<span class="trophy-icon">🏆</span> ' : ''}${player.name} - ${player.wins || 0} wins`;
+    list.appendChild(item);
+  });
+  sorted.forEach(player => {
+  const total = player.scores.reduce((a, b) => a + b, 0);
+  const odds = Math.max(0, (1 - total / 250)).toFixed(2);
+  const li = document.createElement('li');
+  li.className = 'list-group-item';
+  li.textContent = `${player.name}: ${(odds * 100).toFixed(0)}% chance to win`;
+  oddsList.appendChild(li);
+});
+  document.getElementById('leaderboard').style.display = 'block';
+}
+
+render();
+</script>
+<audio id="winSound" preload="auto">
+  <source src="https://assets.mixkit.co/sfx/preview/mixkit-achievement-bell-600.mp3" type="audio/mpeg">
+</audio>
+
+</body>
+</html>
